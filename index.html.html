@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grab & Throw - Knowledge Arena (Ayat Aktif)</title>
+    <!-- Tailwind CSS for UI overlay -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- MediaPipe Camera Utils & Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Font (Fredoka / Outfit) -->
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            font-family: 'Fredoka', cursive, sans-serif;
+            user-select: none;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #0f172a;
+        }
+
+        /* Canvas & Video Styling */
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #webcam {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror view */
+            z-index: 1;
+        }
+
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 3;
+            pointer-events: none;
+        }
+
+        .interactive {
+            pointer-events: auto;
+        }
+
+        /* Neon Text Glow & Animations */
+        .text-glow {
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.8), 0 0 20px rgba(59, 130, 246, 0.6);
+        }
+
+        .pulse-btn {
+            animation: pulse-animation 2s infinite;
+        }
+
+        @keyframes pulse-animation {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        /* Glassmorphic UI Card */
+        .glass-card {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(12px);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <!-- Live Webcam Output -->
+        <video id="webcam" autoplay playsinline muted></video>
+
+        <!-- Canvas for Game Physics, Hand Tracking Cursor, Effects -->
+        <canvas id="game-canvas"></canvas>
+
+        <!-- UI Overlay Layer -->
+        <div id="ui-layer" class="flex flex-col justify-between p-4 md:p-6">
+            
+            <!-- Top Header Bar: Score, Timer, Lives -->
+            <div id="top-bar" class="flex justify-between items-center w-full max-w-5xl mx-auto glass-card rounded-2xl p-4 hidden">
+                <!-- Score -->
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-xl bg-yellow-500/20 border-2 border-yellow-400 flex items-center justify-center text-yellow-400 text-2xl">
+                        <i class="fa-solid fa-trophy"></i>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-300 uppercase tracking-wider">Skor</div>
+                        <div id="score-text" class="text-2xl md:text-3xl font-bold text-yellow-400">0</div>
+                    </div>
+                </div>
+
+                <!-- Timer -->
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-xl bg-cyan-500/20 border-2 border-cyan-400 flex items-center justify-center text-cyan-400 text-2xl">
+                        <i class="fa-solid fa-clock"></i>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-300 uppercase tracking-wider">Masa</div>
+                        <div id="timer-text" class="text-2xl md:text-3xl font-bold text-cyan-300">120s</div>
+                    </div>
+                </div>
+
+                <!-- Lives -->
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-xl bg-red-500/20 border-2 border-red-400 flex items-center justify-center text-red-400 text-2xl">
+                        <i class="fa-solid fa-heart"></i>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-300 uppercase tracking-wider">Nyawa</div>
+                        <div id="lives-container" class="flex gap-1 text-red-500 text-xl md:text-2xl">
+                            <i class="fa-solid fa-heart"></i>
+                            <i class="fa-solid fa-heart"></i>
+                            <i class="fa-solid fa-heart"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Start Screen Overlay -->
+            <div id="start-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-md interactive z-10 p-4">
+                <div class="glass-card p-8 rounded-3xl max-w-xl w-full text-center border-cyan-500/40 relative overflow-hidden">
+                    <div class="absolute -top-10 -left-10 w-32 h-32 bg-cyan-500/20 rounded-full blur-2xl"></div>
+                    <div class="absolute -bottom-10 -right-10 w-32 h-32 bg-pink-500/20 rounded-full blur-2xl"></div>
+
+                    <h1 class="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-pink-500 to-yellow-400 mb-2">
+                        KNOWLEDGE ARENA
+                    </h1>
+                    <p class="text-lg text-cyan-200 mb-6 font-semibold">Topik: Ayat Aktif (Bahasa Melayu Tahun 4)</p>
+
+                    <div class="bg-slate-900/60 p-4 rounded-xl text-left text-sm text-slate-300 mb-6 space-y-2 border border-slate-700">
+                        <div class="flex items-center gap-2 text-yellow-400 font-bold text-base mb-1">
+                            <i class="fa-solid fa-hand-pointer"></i> Cara Bermain:
+                        </div>
+                        <p>1. Benarkan akses webcam dan tunjukkan tangan anda.</p>
+                        <p>2. <b>Pinch (Cubit)</b> ibu jari & jari telunjuk untuk <b>mengenggam (Grab)</b> bola jawapan.</p>
+                        <p>3. Tari atau gerakkan tangan ke arah sasaran sasaran jawapan yang betul di atas.</p>
+                        <p>4. <b>Lepaskan pinch</b> untuk <b>membaling (Throw)</b> bola ke sasaran!</p>
+                    </div>
+
+                    <button id="start-btn" class="pulse-btn w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xl rounded-2xl shadow-lg shadow-emerald-500/30 transition-all border border-emerald-300">
+                        <i class="fa-solid fa-play mr-2"></i> MULA BERMAIN
+                    </button>
+                    <p id="camera-status" class="text-xs text-gray-400 mt-3"><i class="fa-solid fa-spinner fa-spin mr-1"></i> Menyediakan Kamera & MediaPipe...</p>
+                </div>
+            </div>
+
+            <!-- Game Over / Victory Overlay -->
+            <div id="game-over-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-lg interactive hidden z-10 p-4">
+                <div class="glass-card p-8 rounded-3xl max-w-lg w-full text-center border-yellow-500/40">
+                    <div id="game-over-icon" class="text-6xl text-yellow-400 mb-3">
+                        <i class="fa-solid fa-crown"></i>
+                    </div>
+                    <h2 id="game-over-title" class="text-4xl font-extrabold text-white mb-2">TAHNIAH!</h2>
+                    <p id="game-over-desc" class="text-slate-300 mb-6">Anda telah menyelesaikan semua soalan Ayat Aktif!</p>
+                    
+                    <div class="bg-slate-900/80 p-4 rounded-2xl mb-6 border border-slate-700">
+                        <div class="text-gray-400 text-sm">JUMLAH SKOR AKHIR</div>
+                        <div id="final-score" class="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-amber-500">0</div>
+                    </div>
+
+                    <button id="restart-btn" class="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-400 hover:to-indigo-500 text-white font-bold text-lg rounded-2xl shadow-lg shadow-blue-500/30 transition-all border border-blue-300">
+                        <i class="fa-solid fa-rotate-right mr-2"></i> MAIN LAGI
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        /**
+         * AUDIO SYSTEM (Web Audio API Synthesizer - No External Audio Files)
+         */
+        class SoundEffects {
+            constructor() {
+                this.ctx = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+
+            playGrab() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(600, this.ctx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.1);
+            }
+
+            playThrow() {
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(400, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(150, this.ctx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.2);
+            }
+
+            playHitCorrect() {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                // High double ding
+                [523.25, 659.25, 783.99].forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+                    gain.gain.setValueAtTime(0.3, now + idx * 0.08);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.08 + 0.2);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(now + idx * 0.08);
+                    osc.stop(now + idx * 0.08 + 0.2);
+                });
+            }
+
+            playHitWrong() {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(180, now);
+                osc.frequency.linearRampToValueAtTime(90, now + 0.3);
+                gain.gain.setValueAtTime(0.4, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            }
+        }
+
+        const sound = new SoundEffects();
+
+        /**
+         * EDUCATIONAL QUESTIONS (Ayat Aktif - BM Tahun 4)
+         */
+        const questionBank = [
+            {
+                question: "Pilih ayat aktif yang betul berdasarkan kata kerja 'membaca':",
+                options: ["Buku membaca oleh Ali.", "Ali membaca buku cerita di pusat sumber.", "Membaca Ali buku cerita."],
+                correct: 1
+            },
+            {
+                question: "Manakah antara berikut merupakan Ayat Aktif Transitif?",
+                options: ["Adik menangis teresak-esak.", "Kucing itu tidur di atas kerusi.", "Ibu memasak gulai ikan."],
+                correct: 2
+            },
+            {
+                question: "Lengkapkan ayat aktif: 'Pekerja itu _____ sampah sarap.'",
+                options: ["membersihkan", "dibersihkan", "terbersih"],
+                correct: 0
+            },
+            {
+                question: "Subjek dalam ayat aktif bertindak sebagai...",
+                options: ["Penerima perbuatan", "Pelaku perbuatan", "Keterangan tempat"],
+                correct: 1
+            },
+            {
+                question: "Pilih ayat yang MENGUNAKAN imbuhan kata kerja aktif:",
+                options: ["Baju itu dibeli oleh Kakak.", "Cikgu menyemak karangan murid.", "Kuih terkemam oleh adik."],
+                correct: 1
+            },
+            {
+                question: "'Abang membaiki basikal yang rosak.' Subjek ayat ini ialah...",
+                options: ["membaiki", "basikal yang rosak", "Abang"],
+                correct: 2
+            },
+            {
+                question: "Tentukan ayat aktif Tak Transitif (tidak memerlukan objek):",
+                options: ["Burung itu terbang tinggi.", "Bapa memandu kereta baharu.", "Saya menulis surat rasmi."],
+                correct: 0
+            },
+            {
+                question: "Pilih susunan ayat aktif yang betul:",
+                options: ["Bola menendang oleh Amir.", "Amir menendang bola ke dalam gol.", "Ke dalam gol bola Amir menendang."],
+                correct: 1
+            },
+            {
+                question: "Apakah objek dalam ayat: 'Peniaga itu menjual buah tembikai'?",
+                options: ["Peniaga itu", "menjual", "buah tembikai"],
+                correct: 2
+            },
+            {
+                question: "Antara berikut, yang manakah BUKAN ayat aktif?",
+                options: ["Cikgu Azmi mengajar Matematik.", "Kerja rumah disiapkan oleh Mei Ling.", "Mei Ling menyiapkan kerja rumah."],
+                correct: 1
+            }
+        ];
+
+        /**
+         * GAME STATE & VARIABLES
+         */
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const webcam = document.getElementById('webcam');
+
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            initTargets();
+        });
+
+        let currentQuestionIdx = 0;
+        let score = 0;
+        let lives = 3;
+        let timeRemaining = 120;
+        let timerInterval = null;
+        let gameActive = false;
+
+        // Hand gesture tracking state
+        let handPos = { x: width / 2, y: height / 2 };
+        let prevHandPos = { x: width / 2, y: height / 2 };
+        let handVelocity = { x: 0, y: 0 };
+        let isPinching = false;
+        let wasPinching = false;
+
+        // Game Entities
+        let targets = []; // Answer targets floating/stationed top
+        let balls = [];   // Throwing balls
+        let particles = []; // Visual effect slash particles
+        let floatingTexts = []; // Score feedback (+100, Salah!)
+
+        /**
+         * TARGET & BALL CLASSES
+         */
+        class Target {
+            constructor(index, text, isCorrect) {
+                this.index = index;
+                this.text = text;
+                this.isCorrect = isCorrect;
+                this.x = 0;
+                this.y = 0;
+                this.radius = 75;
+                this.color = index === 0 ? '#38bdf8' : (index === 1 ? '#f43f5e' : '#a855f7');
+                this.scale = 1;
+                this.pulse = Math.random() * Math.PI;
+            }
+
+            update() {
+                this.pulse += 0.05;
+                this.scale = 1 + Math.sin(this.pulse) * 0.04;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.scale(this.scale, this.scale);
+
+                // Outer Glowing Ring
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius + 8, 0, Math.PI * 2);
+                ctx.fillStyle = this.color + '44';
+                ctx.fill();
+
+                // Inner Main Circle
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                const grad = ctx.createRadialGradient(0, 0, 10, 0, 0, this.radius);
+                grad.addColorStop(0, '#ffffff');
+                grad.addColorStop(0.3, this.color);
+                grad.addColorStop(1, '#0f172a');
+                ctx.fillStyle = grad;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 15;
+                ctx.fill();
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+
+                // Option Label (A, B, C)
+                const labels = ['A', 'B', 'C'];
+                ctx.fillStyle = '#fde047';
+                ctx.font = '900 22px Fredoka';
+                ctx.textAlign = 'center';
+                ctx.fillText(`PILIHAN ${labels[this.index]}`, 0, -this.radius + 25);
+
+                // Answer Text (Wrapped)
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '600 15px Fredoka';
+                ctx.shadowBlur = 4;
+                ctx.shadowColor = '#000000';
+                
+                this.wrapText(this.text, 0, -5, this.radius * 1.6, 20);
+
+                ctx.restore();
+            }
+
+            wrapText(text, x, y, maxWidth, lineHeight) {
+                const words = text.split(' ');
+                let line = '';
+                let lines = [];
+
+                for (let n = 0; n < words.length; n++) {
+                    let testLine = line + words[n] + ' ';
+                    let metrics = ctx.measureText(testLine);
+                    let testWidth = metrics.width;
+                    if (testWidth > maxWidth && n > 0) {
+                        lines.push(line);
+                        line = words[n] + ' ';
+                    } else {
+                        line = testLine;
+                    }
+                }
+                lines.push(line);
+
+                let startY = y - ((lines.length - 1) * lineHeight) / 2;
+                for (let i = 0; i < lines.length; i++) {
+                    ctx.fillText(lines[i].trim(), x, startY + (i * lineHeight));
+                }
+            }
+        }
+
+        class AnswerBall {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 35;
+                this.vx = 0;
+                this.vy = 0;
+                this.isGrabbed = false;
+                this.isThrown = false;
+                this.color = '#eab308';
+                this.trail = [];
+            }
+
+            update() {
+                if (this.isGrabbed) {
+                    this.x = handPos.x;
+                    this.y = handPos.y;
+                    this.trail.push({ x: this.x, y: this.y, alpha: 1.0 });
+                } else if (this.isThrown) {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.vy += 0.2; // Minor gravity
+
+                    this.trail.push({ x: this.x, y: this.y, alpha: 1.0 });
+
+                    // Check bounds offscreen
+                    if (this.x < -50 || this.x > width + 50 || this.y < -50 || this.y > height + 50) {
+                        resetBall();
+                    }
+                }
+
+                // Decay trail
+                for (let i = 0; i < this.trail.length; i++) {
+                    this.trail[i].alpha -= 0.08;
+                }
+                this.trail = this.trail.filter(t => t.alpha > 0);
+            }
+
+            draw() {
+                // Draw motion trail
+                this.trail.forEach(t => {
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, this.radius * t.alpha * 0.8, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(234, 179, 8, ${t.alpha * 0.4})`;
+                    ctx.fill();
+                });
+
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Ball Outer Energy Ring
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius + (this.isGrabbed ? 10 : 4), 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(250, 204, 21, 0.4)';
+                ctx.fill();
+
+                // Main Sphere Gradient
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                const grad = ctx.createRadialGradient(-10, -10, 5, 0, 0, this.radius);
+                grad.addColorStop(0, '#fef08a');
+                grad.addColorStop(0.5, '#eab308');
+                grad.addColorStop(1, '#854d0e');
+                ctx.fillStyle = grad;
+                ctx.shadowColor = '#eab308';
+                ctx.shadowBlur = this.isGrabbed ? 25 : 10;
+                ctx.fill();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+
+                // Icon / Pattern inside ball
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '900 20px "Font Awesome 6 Free"';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.isGrabbed ? '\uf25a' : '\uf1e0', 0, 0); // Hand pinch or share icon
+
+                ctx.restore();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.radius = Math.random() * 6 + 3;
+                this.vx = (Math.random() - 0.5) * 12;
+                this.vy = (Math.random() - 0.5) * 12;
+                this.life = 1.0;
+                this.decay = Math.random() * 0.03 + 0.02;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= this.decay;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 10;
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class FloatingText {
+            constructor(text, x, y, color) {
+                this.text = text;
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.alpha = 1.0;
+                this.vy = -2;
+            }
+
+            update() {
+                this.y += this.vy;
+                this.alpha -= 0.02;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, this.alpha);
+                ctx.font = '900 32px Fredoka';
+                ctx.fillStyle = this.color;
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 4;
+                ctx.textAlign = 'center';
+                ctx.strokeText(this.text, this.x, this.y);
+                ctx.fillText(this.text, this.x, this.y);
+                ctx.restore();
+            }
+        }
+
+        let activeBall = new AnswerBall(width / 2, height - 120);
+
+        function resetBall() {
+            activeBall = new AnswerBall(width / 2, height - 120);
+        }
+
+        /**
+         * INITIALIZE TARGET POSITIONS & QUESTIONS
+         */
+        function initTargets() {
+            targets = [];
+            const currentQ = questionBank[currentQuestionIdx];
+            const count = currentQ.options.length;
+            const spacing = width / (count + 1);
+
+            for (let i = 0; i < count; i++) {
+                const target = new Target(i, currentQ.options[i], i === currentQ.correct);
+                target.x = spacing * (i + 1);
+                target.y = 220; // Position below question box
+                targets.push(target);
+            }
+        }
+
+        /**
+         * MEDIAPIPE HANDS SETUP
+         */
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(onHandResults);
+
+        const camera = new Camera(webcam, {
+            onFrame: async () => {
+                await hands.send({ image: webcam });
+            },
+            width: 1280,
+            height: 720
+        });
+
+        camera.start().then(() => {
+            document.getElementById('camera-status').innerHTML = '<i class="fa-solid fa-check text-emerald-400 mr-1"></i> Kamera & Hand Tracking Bersedia!';
+        }).catch(err => {
+            document.getElementById('camera-status').innerHTML = '<i class="fa-solid fa-triangle-exclamation text-red-400 mr-1"></i> Gagal mengakses kamera.';
+        });
+
+        function onHandResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+
+                // Thumb tip (index 4) and Index finger tip (index 8)
+                const thumb = landmarks[4];
+                const indexFinger = landmarks[8];
+
+                // Coordinates mirrored for natural feel
+                const rawX = (1 - (thumb.x + indexFinger.x) / 2) * width;
+                const rawY = ((thumb.y + indexFinger.y) / 2) * height;
+
+                // Smooth hand cursor movement
+                handPos.x += (rawX - handPos.x) * 0.4;
+                handPos.y += (rawY - handPos.y) * 0.4;
+
+                // Velocity computation for throwing momentum
+                handVelocity.x = handPos.x - prevHandPos.x;
+                handVelocity.y = handPos.y - prevHandPos.y;
+                prevHandPos = { ...handPos };
+
+                // Calculate Euclidean distance between thumb and index tip
+                const dx = (thumb.x - indexFinger.x) * width;
+                const dy = (thumb.y - indexFinger.y) * height;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                // Pinch threshold
+                isPinching = distance < 65;
+
+                // Handle Grab & Release logic
+                if (gameActive) {
+                    // GRAB Trigger
+                    if (isPinching && !wasPinching) {
+                        const distToBall = Math.hypot(handPos.x - activeBall.x, handPos.y - activeBall.y);
+                        if (distToBall < activeBall.radius + 50 && !activeBall.isThrown) {
+                            activeBall.isGrabbed = true;
+                            sound.playGrab();
+                        }
+                    }
+
+                    // THROW Trigger
+                    if (!isPinching && wasPinching && activeBall.isGrabbed) {
+                        activeBall.isGrabbed = false;
+                        activeBall.isThrown = true;
+
+                        // Give throw impulse based on hand velocity
+                        activeBall.vx = handVelocity.x * 1.5;
+                        activeBall.vy = Math.min(handVelocity.y * 1.5, -8); // Ensure upwards motion boost
+                        if (Math.abs(activeBall.vy) < 5) activeBall.vy = -14; // Default strong upward throw
+
+                        sound.playThrow();
+                    }
+                }
+
+                wasPinching = isPinching;
+            }
+        }
+
+        /**
+         * MAIN GAME RENDER & PHYSICS LOOP
+         */
+        function gameLoop() {
+            ctx.clearRect(0, 0, width, height);
+
+            if (gameActive) {
+                // 1. Draw Question Board Overlay on top of canvas
+                drawQuestionBoard();
+
+                // 2. Update and Draw Answer Targets
+                targets.forEach(target => {
+                    target.update();
+                    target.draw();
+                });
+
+                // 3. Update & Draw Active Ball
+                activeBall.update();
+                activeBall.draw();
+
+                // 4. Collision Detection (Ball vs Targets)
+                if (activeBall.isThrown) {
+                    targets.forEach(target => {
+                        const dist = Math.hypot(activeBall.x - target.x, activeBall.y - target.y);
+                        if (dist < target.radius + activeBall.radius) {
+                            handleTargetHit(target);
+                        }
+                    });
+                }
+
+                // 5. Update & Draw Visual Particles (Slashes/Explosions)
+                particles.forEach((p, index) => {
+                    p.update();
+                    p.draw();
+                    if (p.life <= 0) particles.splice(index, 1);
+                });
+
+                // 6. Update & Draw Floating Score Feedback Texts
+                floatingTexts.forEach((ft, index) => {
+                    ft.update();
+                    ft.draw();
+                    if (ft.alpha <= 0) floatingTexts.splice(index, 1);
+                });
+
+                // 7. Render Hand Tracker Cursor & Pinch Visual Indicator
+                drawHandCursor();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function drawQuestionBoard() {
+            const currentQ = questionBank[currentQuestionIdx];
+
+            ctx.save();
+            // Background Header Box
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 3;
+
+            const boxWidth = Math.min(width * 0.85, 900);
+            const boxHeight = 90;
+            const boxX = (width - boxWidth) / 2;
+            const boxY = 85;
+
+            ctx.beginPath();
+            ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 20);
+            ctx.fill();
+            ctx.stroke();
+
+            // Question Count Tag
+            ctx.fillStyle = '#f59e0b';
+            ctx.font = '700 16px Fredoka';
+            ctx.textAlign = 'center';
+            ctx.fillText(`SOALAN ${currentQuestionIdx + 1} / ${questionBank.length}`, width / 2, boxY + 25);
+
+            // Question Text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '600 20px Fredoka';
+            ctx.fillText(currentQ.question, width / 2, boxY + 60);
+
+            ctx.restore();
+        }
+
+        function drawHandCursor() {
+            ctx.save();
+            ctx.translate(handPos.x, handPos.y);
+
+            // Cursor Outer Aura
+            ctx.beginPath();
+            ctx.arc(0, 0, isPinching ? 28 : 20, 0, Math.PI * 2);
+            ctx.fillStyle = isPinching ? 'rgba(239, 68, 68, 0.4)' : 'rgba(56, 189, 248, 0.4)';
+            ctx.fill();
+
+            // Center Point
+            ctx.beginPath();
+            ctx.arc(0, 0, 8, 0, Math.PI * 2);
+            ctx.fillStyle = isPinching ? '#ef4444' : '#38bdf8';
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+
+            // Status Text under hand
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '700 12px Fredoka';
+            ctx.textAlign = 'center';
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = '#000000';
+            ctx.fillText(isPinching ? 'GRABBED!' : 'PINCH TO GRAB', 0, 35);
+
+            ctx.restore();
+        }
+
+        function spawnSlashParticles(x, y, color) {
+            for (let i = 0; i < 35; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function handleTargetHit(target) {
+            spawnSlashParticles(target.x, target.y, target.color);
+
+            if (target.isCorrect) {
+                sound.playHitCorrect();
+                score += 100;
+                document.getElementById('score-text').innerText = score;
+                floatingTexts.push(new FloatingText('+100 TEPAT!', target.x, target.y, '#4ade80'));
+
+                // Move to next question after short pause
+                setTimeout(() => {
+                    currentQuestionIdx++;
+                    if (currentQuestionIdx >= questionBank.length) {
+                        endGame(true);
+                    } else {
+                        initTargets();
+                        resetBall();
+                    }
+                }, 600);
+            } else {
+                sound.playHitWrong();
+                lives--;
+                updateLivesUI();
+                floatingTexts.push(new FloatingText('SALAH!', target.x, target.y, '#f87171'));
+
+                if (lives <= 0) {
+                    endGame(false);
+                } else {
+                    resetBall();
+                }
+            }
+
+            // Deactivate ball immediately upon hit
+            activeBall.isThrown = false;
+            activeBall.y = -999;
+        }
+
+        function updateLivesUI() {
+            const container = document.getElementById('lives-container');
+            container.innerHTML = '';
+            for (let i = 0; i < 3; i++) {
+                if (i < lives) {
+                    container.innerHTML += '<i class="fa-solid fa-heart"></i>';
+                } else {
+                    container.innerHTML += '<i class="fa-regular fa-heart opacity-40"></i>';
+                }
+            }
+        }
+
+        /**
+         * GAME CONTROL & TIMERS
+         */
+        function startGame() {
+            sound.init();
+            score = 0;
+            lives = 3;
+            timeRemaining = 120;
+            currentQuestionIdx = 0;
+
+            document.getElementById('score-text').innerText = '0';
+            document.getElementById('timer-text').innerText = '120s';
+            updateLivesUI();
+
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('game-over-screen').classList.add('hidden');
+            document.getElementById('top-bar').classList.remove('hidden');
+
+            initTargets();
+            resetBall();
+            gameActive = true;
+
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timeRemaining--;
+                document.getElementById('timer-text').innerText = `${timeRemaining}s`;
+                if (timeRemaining <= 0) {
+                    endGame(false);
+                }
+            }, 1000);
+        }
+
+        function endGame(isVictory) {
+            gameActive = false;
+            clearInterval(timerInterval);
+
+            const gameOverScreen = document.getElementById('game-over-screen');
+            const icon = document.getElementById('game-over-icon');
+            const title = document.getElementById('game-over-title');
+            const desc = document.getElementById('game-over-desc');
+            const finalScore = document.getElementById('final-score');
+
+            finalScore.innerText = score;
+
+            if (isVictory) {
+                icon.innerHTML = '<i class="fa-solid fa-trophy text-yellow-400"></i>';
+                title.innerText = 'TAHNIAH! KEMENANGAN!';
+                desc.innerText = 'Anda telah menguasai konsep Ayat Aktif Bahasa Melayu Tahun 4 dengan cemerlang!';
+            } else {
+                icon.innerHTML = '<i class="fa-solid fa-heart-crack text-red-500"></i>';
+                title.innerText = 'TAMAT PERMAINAN';
+                desc.innerText = 'Jangan putus asa! Cuba lagi untuk memantapkan pemahaman Ayat Aktif.';
+            }
+
+            gameOverScreen.classList.remove('hidden');
+        }
+
+        // EVENT LISTENERS
+        document.getElementById('start-btn').addEventListener('click', startGame);
+        document.getElementById('restart-btn').addEventListener('click', startGame);
+
+        // Start animation loop on window load
+        window.onload = () => {
+            gameLoop();
+        };
+    </script>
+</body>
+</html>
